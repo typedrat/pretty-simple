@@ -17,7 +17,7 @@ module Text.Pretty.Simple.Internal.ExprParser
 
 import Text.Pretty.Simple.Internal.Expr (CommaSeparated(..), Expr(..))
 import Control.Arrow (first)
-import Data.Char (isAlpha, isDigit)
+import Data.Char (isAlpha, isDigit, isHexDigit)
 
 -- | 'testString1' and 'testString2' are convenient to use in GHCi when playing
 -- around with how parsing works.
@@ -37,7 +37,8 @@ parseExpr ('[':rest) = first (Brackets . CommaSeparated) $ parseCSep ']' rest
 parseExpr ('{':rest) = first (Braces . CommaSeparated) $ parseCSep '}' rest
 parseExpr ('"':rest) = first StringLit $ parseStringLit rest
 parseExpr ('\'':rest) = first CharLit $ parseCharLit rest
-parseExpr (c:rest) | isDigit c = first NumberLit $ parseNumberLit c rest
+parseExpr ('0':'x':c:rest) | isHexDigit c = first (NumberLit . ('0' :) . ('x' :)) $ parseNumberLit c rest
+parseExpr (c:rest)         | isDigit c    = first NumberLit                       $ parseNumberLit c rest
 parseExpr other      = first Other $ parseOther other
 
 -- | Parse multiple expressions.
@@ -107,25 +108,26 @@ parseCharLit (c:cs) = (c:cs', rest)
 
 -- | Parses integers and reals, like @123@ and @45.67@.
 --
--- To be more precise, any numbers matching the regex @\\d+(\\.\\d+)?@ should
--- get parsed by this function.
+-- To be more precise, any numbers matching the regex @\\d+(\\.\\d+)?(e[\\+-]?\\d+)?@
+-- should get parsed by this function.
 --
 -- >>> parseNumberLit '3' "456hello world []"
 -- ("3456","hello world []")
 -- >>> parseNumberLit '0' ".12399880 foobar"
 -- ("0.12399880"," foobar")
 parseNumberLit :: Char -> String -> (String, String)
-parseNumberLit firstDigit rest1 =
-  case rest2 of
-    []        -> (firstDigit:remainingDigits, "")
-    '.':rest3 ->
-      let (digitsAfterDot, rest4) = span isDigit rest3
-      in ((firstDigit : remainingDigits) ++ ('.' : digitsAfterDot), rest4)
-    _         -> (firstDigit:remainingDigits, rest2)
+parseNumberLit firstDigit = go (firstDigit :) False False
   where
-    remainingDigits :: String
-    rest2 :: String
-    (remainingDigits, rest2) = span isDigit rest1
+    go :: (String -> String) -> Bool -> Bool -> String -> (String, String)
+    go f _ _ [] = (f "", "")
+    go f False hasExponent ('.':rest) = go (f . ('.' :)) True hasExponent rest
+    go f _ False ('e':'+':rest)                    = go (f . ('e' :) . ('+' :)) True True rest
+    go f _ False ('e':'-':rest)                    = go (f . ('e' :) . ('-' :)) True True rest
+    go f _ False ('e':rest)                        = go (f . ('e' :))           True True rest
+    go f hasDecimal hasExponent rest
+      | not (null remainingDigits) = go (f . (remainingDigits ++)) hasDecimal hasExponent rest'
+      | otherwise                  = (f "", rest)
+      where (remainingDigits, rest') = span isHexDigit rest
 
 -- | This function consumes input, stopping only when it hits a special
 -- character or a digit.  However, if the digit is in the middle of a
